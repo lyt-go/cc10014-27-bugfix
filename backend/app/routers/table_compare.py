@@ -64,16 +64,47 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions")
 def run_action(entry_id: int, payload: ActionPayload) -> ActionResult:
-    entry_or_none, message = service.run_action(entry_id, payload.action)
+    entry_or_none, message = service.run_action(entry_id, payload.action, payload.mode)
     if entry_or_none is None:
         return ActionResult(ok=False, message=message)
+    if entry_or_none.get("last_run_failed"):
+        return ActionResult(ok=False, message=message, entry=entry_or_none)
     return ActionResult(ok=True, message=message, entry=entry_or_none)
 
 
 @router.get("/{entry_id}/result")
 def get_compare_result(entry_id: int) -> dict[str, Any]:
-    """返回比对结果，包含差异数量和补数任务。"""
+    """返回比对结果，包含差异数量、差异分区清单和补数任务。"""
     entry = service.get_entry(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"比对任务 {entry_id} 不存在")
-    return entry.get("_compare_result", {})
+    result = dict(entry.get("_compare_result", {}))
+    result["diff_partitions"] = service.get_diff_partitions(entry_id)
+    result["backfill_jobs"] = entry.get("backfill_jobs", [])
+    result["error_message"] = entry.get("error_message", "")
+    return result
+
+
+@router.get("/{entry_id}/diff-partitions")
+def get_diff_partitions(entry_id: int) -> dict[str, Any]:
+    """差异分区清单：保留差异日期、差异键和触发任务数据结果。"""
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"比对任务 {entry_id} 不存在")
+    rows = service.get_diff_partitions(entry_id)
+    return {
+        "items": rows,
+        "total": len(rows),
+        "compare_id": entry_id,
+        "compare_no": entry.get("任务编号", ""),
+        "target_table": entry.get("右表名称", ""),
+    }
+
+
+@router.post("/{entry_id}/diff-partitions/{seq}/resolve")
+def resolve_conflict(entry_id: int, seq: int, payload: ActionPayload) -> ActionResult:
+    """裁决差异分区冲突：accept_priority（接受优先级）或 take_over（接管）。"""
+    row_or_none, message = service.resolve_conflict(entry_id, seq, payload.action)
+    if row_or_none is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=row_or_none)

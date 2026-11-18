@@ -33,6 +33,7 @@ class ActionPayload(BaseModel):
 
     action: str
     remark: str | None = None
+    mode: str | None = None  # 表级比对边界模式：strict / relaxed
 
 
 

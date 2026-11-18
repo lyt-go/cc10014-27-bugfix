@@ -29,12 +29,18 @@ class Store:
         self._archive_records: list[dict[str, Any]] = []
         # 补数区间记录
         self._backfill_partitions: dict[str, list[dict[str, Any]]] = {}
+        # 差异分区清单: "compare_id" -> [差异分区记录, ...]
+        self._diff_partitions: dict[str, list[dict[str, Any]]] = {}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
-        return self._tables.setdefault(module, [])
+        # 注意：不能用 setdefault——测试或清理逻辑可能直接给 _tables[module] 赋新列表，
+        # 此前取到旧引用的调用方再 append 会写到已脱管的列表里，持久化对不上。
+        if module not in self._tables:
+            self._tables[module] = []
+        return self._tables[module]
 
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):
@@ -165,6 +171,27 @@ class Store:
 
     def get_backfill_partitions(self, job_id: str) -> list[dict[str, Any]]:
         return list(self._backfill_partitions.get(job_id, []))
+
+    # ---- 差异分区清单 ----
+
+    def replace_diff_partitions(self, compare_id: int, rows: list[dict[str, Any]]) -> None:
+        """整单替换差异分区清单：先构建完整清单再落库，保证与补数记录一致。"""
+        self._diff_partitions[str(compare_id)] = [dict(row) for row in rows]
+
+    def get_diff_partitions(self, compare_id: int) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._diff_partitions.get(str(compare_id), [])]
+
+    def all_diff_partitions(self) -> dict[str, list[dict[str, Any]]]:
+        return {key: [dict(row) for row in rows] for key, rows in self._diff_partitions.items()}
+
+    def find_diff_partition(self, compare_id: int, seq: int) -> dict[str, Any] | None:
+        for row in self._diff_partitions.get(str(compare_id), []):
+            if int(row.get("seq", -1)) == seq:
+                return row
+        return None
+
+    def clear_diff_partitions(self) -> None:
+        self._diff_partitions.clear()
 
 
 store = Store()

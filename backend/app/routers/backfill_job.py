@@ -67,4 +67,15 @@ def run_action(entry_id: int, payload: ActionPayload) -> ActionResult:
     entry_or_none, message = service.run_action(entry_id, payload.action)
     if entry_or_none is None:
         return ActionResult(ok=False, message=message)
+    if entry_or_none.get("error_message"):
+        return ActionResult(ok=False, message=message, entry=entry_or_none)
     return ActionResult(ok=True, message=message, entry=entry_or_none)
+
+
+@router.get("/{entry_id}/linkage")
+def get_linkage(entry_id: int) -> dict[str, Any]:
+    """回查补数任务来源的差异键、左右表分区与差异分区清单行。"""
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"补数任务 {entry_id} 不存在")
+    return service.get_linkage(entry_id)
